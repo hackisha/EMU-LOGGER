@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MF-25 - Accelerometer</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+        :root{
+            --bg-color:#1a1a1a;
+            --panel-color:#2c2c2c;
+            --text-color:#e0e0e0;
+            --accent-yellow:#ffc300;
+            --accent-red:#e63946;
+            --panel-border:#333;
+            --panel-shadow: rgba(0,0,0,0.5);
+        }
+        *{ box-sizing:border-box; }
+        body{
+            margin:0; font-family:'Roboto',sans-serif; background:var(--bg-color);
+            color:var(--text-color); display:flex; justify-content:center;
+            align-items:flex-start; min-height:100vh; padding:10px;
+        }
+        .container{
+            width:100%; max-width:1000px; background:#000; border:2px solid var(--panel-border);
+            border-radius:10px; padding:10px; box-shadow:0 0 20px var(--panel-shadow);
+        }
+        nav{
+            display:flex; flex-wrap:wrap; border-bottom:2px solid var(--panel-border); margin-bottom:15px;
+        }
+        nav a{
+            flex:1; min-width:120px; text-align:center; padding:10px; color:var(--text-color);
+            text-decoration:none; font-family:'Orbitron',sans-serif; font-weight:500;
+            border-bottom:3px solid transparent; transition:all .3s ease;
+        }
+        nav a.active{ color:var(--accent-yellow); border-bottom-color:var(--accent-yellow); }
+        .btn{
+            background:var(--accent-yellow); color:#111; border:1px solid #8c6d00;
+            border-radius:8px; padding:10px 14px; cursor:pointer; font-weight:900;
+            transition: all .15s ease; font-family: 'Roboto', sans-serif;
+        }
+        .btn-secondary { background: #3a3a3a; color: #e0e0e0; border-color: #555; }
+        
+        /* 3D 뷰어 관련 스타일 */
+        .three-section{
+            background:var(--panel-color); border:1px solid var(--panel-border);
+            border-radius:8px; padding:10px;
+        }
+        .three-wrap{
+            position:relative; border-radius:10px; border:1px solid var(--panel-border);
+            overflow:hidden; background:#0a0a0a; height:60vh; min-height: 400px;
+        }
+        canvas.three-canvas{ width:100%; height:100%; display:block; }
+        .accel-hud{
+            position:absolute; right:12px; top:12px; background:rgba(0,0,0,0.45);
+            border:1px solid #222; border-radius:10px; padding:10px 12px;
+            color:#eaeaea; font-size:13px; backdrop-filter: blur(3px); z-index: 5;
+        }
+        .accel-hud .title{ font-family:'Orbitron',sans-serif; color:#ffd866; font-size:12px; margin-bottom:6px; }
+        .accel-row{ display:flex; justify-content:space-between; gap:14px; }
+        .accel-row + .accel-row{ margin-top:4px; }
+        .badge{ color:#9bd3ff; }
+        .actions{ display:flex; gap:10px; align-items:center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav>
+            <a href="./dashboard.html">Main Dashboard</a>
+            <a href="./sensor.html">Sensor data</a>
+            <a href="./gps.html">GPS</a>
+            <a href="./accel.html" class="active">가속도</a>
+        </nav>
+
+        <section class="three-section">
+            <div class="three-wrap">
+                <div class="accel-hud">
+                    <div class="title">ADXL345</div>
+                    <div class="accel-row"><span class="badge">Ax</span><span id="axVal">--</span> <span>g</span></div>
+                    <div class="accel-row"><span class="badge">Ay</span><span id="ayVal">--</span> <span>g</span></div>
+                    <div class="accel-row"><span class="badge">Az</span><span id="azVal">--</span> <span>g</span></div>
+                    <div class="accel-row" style="margin-top:6px;"><span class="badge">Pitch</span><span id="pitchVal">--</span> <span>°</span></div>
+                    <div class="accel-row"><span class="badge">Roll</span><span id="rollVal">--</span> <span>°</span></div>
+                </div>
+                <canvas id="threeCanvas" class="three-canvas"></canvas>
+                <div class="actions" style="position:absolute; bottom:12px; right:12px; z-index: 5;">
+                    <button id="btnCalibrate" class="btn btn-secondary" title="현재 차량의 기울기를 기본 자세로 설정합니다.">자세 보정 (영점 설정)</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 네비게이션 활성화
+            const links = document.querySelectorAll('nav a');
+            const current = window.location.pathname.split('/').pop() || 'accel.html';
+            links.forEach(a => { if (a.getAttribute('href').includes(current)) a.classList.add('active'); });
+
+            // Socket.IO 연결 및 가속도 데이터 수신
+            const socket = io();
+            socket.on('telemetry_update', (data) => {
+                if (data && data.accel && window.buf) {
+                    const { ax_g, ay_g, az_g } = data.accel;
+                    if (ax_g !== undefined) {
+                        window.buf.push({ t: performance.now(), ax: ax_g, ay: ay_g, az: az_g });
+                    }
+                }
+            });
+        });
+    </script>
+
+    <script type="module">
+    import * as THREE from 'https://esm.sh/three@0.159.0';
+    import { OrbitControls } from 'https://esm.sh/three@0.159.0/examples/jsm/controls/OrbitControls.js';
+    import { GLTFLoader } from 'https://esm.sh/three@0.159.0/examples/jsm/loaders/GLTFLoader.js';
+
+    document.addEventListener('DOMContentLoaded', function() {
+        class SampleBuffer {
+            constructor() { this.arr = []; }
+            push(sample) { this.arr.push(sample); const tNow = performance.now(); while (this.arr.length > 100) this.arr.shift(); }
+            getAt(t) {
+                const a = this.arr; if (a.length === 0) return null;
+                if (t <= a[0].t) return a[0]; if (t >= a[a.length - 1].t) return a[a.length - 1];
+                let lo = 0, hi = a.length - 1;
+                while (lo + 1 < hi) { const mid = (lo + hi) >> 1; if (a[mid].t <= t) lo = mid; else hi = mid; }
+                const s0 = a[lo], s1 = a[lo + 1]; const w = (t - s0.t) / (s1.t - s0.t);
+                const lerp = (x, y) => x + (y - x) * w;
+                return { ax: lerp(s0.ax, s1.ax), ay: lerp(s0.ay, s1.ay), az: lerp(s0.az, s1.az) };
+            }
+        }
+        window.buf = new SampleBuffer();
+
+        const canvas = document.getElementById('threeCanvas');
+        if (canvas) {
+            const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+            renderer.setClearColor(0x151515, 1);
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+            camera.position.set(3.2, 2.0, 4.2);
+
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(5, 10, 7);
+            scene.add(dirLight);
+
+            let car = new THREE.Group();
+            const loader = new GLTFLoader();
+            loader.load('/static/car.glb', (gltf) => {
+                car = gltf.scene;
+                // 모델 크기 및 위치 자동 조정 로직
+                const box = new THREE.Box3().setFromObject(car);
+                const size = new THREE.Vector3(); box.getSize(size);
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const scale = 2.0 / maxDim;
+                car.scale.setScalar(scale);
+                box.setFromObject(car); // 크기 조절 후 박스 다시 계산
+                const center = new THREE.Vector3(); box.getCenter(center);
+                car.position.sub(center);
+                car.position.y += -box.min.y;
+                scene.add(car);
+            }, undefined, (error) => console.error('An error happened', error));
+
+            const grid = new THREE.GridHelper(100, 50, 0x444444, 0x222222);
+            scene.add(grid);
+
+            function resize() {
+                const { width, height } = canvas.getBoundingClientRect();
+                renderer.setSize(width, height, false);
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            const axEl = document.getElementById('axVal'), ayEl = document.getElementById('ayVal'), azEl = document.getElementById('azVal');
+            const pitchEl = document.getElementById('pitchVal'), rollEl = document.getElementById('rollVal');
+            
+            const btnCalibrate = document.getElementById('btnCalibrate');
+            
+            let zeroQuaternionInverse = new THREE.Quaternion();
+            let ema = { ax: 0, ay: 0, az: 1 };
+            let emaInit = false;
+            const qTarget = new THREE.Quaternion();
+            const eulerTmp = new THREE.Euler(0, 0, 0, 'XYZ');
+
+            function accelToAngles(ax, ay, az){
+                const m = Math.hypot(ax, ay, az) || 1;
+                const x = ax / m, y = ay / m, z = az / m;
+                const pitch = Math.atan2(x, Math.hypot(y, z));
+                const roll  = Math.atan2(-ay, -az); // Y축과 Z축 부호 수정
+                return { pitch, roll };
+            }
+
+            if(btnCalibrate) {
+                btnCalibrate.addEventListener('click', () => {
+                    const { pitch, roll } = accelToAngles(ema.ax, ema.ay, ema.az);
+                    eulerTmp.set(pitch, 0, roll, 'XYZ');
+                    const currentOrientation = new THREE.Quaternion().setFromEuler(eulerTmp);
+                    zeroQuaternionInverse.copy(currentOrientation).invert();
+                    btnCalibrate.textContent = "영점 설정 완료!";
+                    setTimeout(() => {
+                        btnCalibrate.textContent = "자세 보정 (영점 설정)";
+                    }, 1500);
+                });
+            }
+
+            const clock = new THREE.Clock();
+            function animate(){
+                const dt = clock.getDelta() * 1000;
+                const s = window.buf.getAt(performance.now() - 100);
+                if (s){
+                    if(!emaInit) {
+                        ema = { ax: s.ax, ay: s.ay, az: s.az };
+                        emaInit = true;
+                    } else {
+                        const alpha = 1 - Math.exp(-dt / 120);
+                        ema.ax += (s.ax - ema.ax) * alpha;
+                        ema.ay += (s.ay - ema.ay) * alpha;
+                        ema.az += (s.az - ema.az) * alpha;
+                    }
+
+                    axEl.textContent = ema.ax.toFixed(3); ayEl.textContent = ema.ay.toFixed(3); azEl.textContent = ema.az.toFixed(3);
+
+                    const { pitch, roll } = accelToAngles(ema.ax, ema.ay, ema.az);
+                    
+                    pitchEl.textContent = (pitch * 180 / Math.PI).toFixed(1);
+                    rollEl.textContent = (roll * 180 / Math.PI).toFixed(1);
+                    
+                    eulerTmp.set(pitch, 0, roll, 'XYZ');
+                    const absoluteOrientation = new THREE.Quaternion().setFromEuler(eulerTmp);
+                    qTarget.multiplyQuaternions(absoluteOrientation, zeroQuaternionInverse);
+                    
+                    const slerpAlpha = 1 - Math.exp(-dt / 120);
+                    car.quaternion.slerp(qTarget, slerpAlpha);
+                }
+                controls.update();
+                renderer.render(scene, camera);
+            }
+            renderer.setAnimationLoop(animate);
+        }
+    });
+</script>
+</body>
+</html>
