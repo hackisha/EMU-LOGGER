@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MF-25 - GPS & Lap Timer</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+      :root{
+          --bg-color:#1a1a1a;
+          --panel-color:#2c2c2c;
+          --text-color:#e0e0e0;
+          --accent-yellow:#ffc300;
+          --accent-red:#e63946;
+          --panel-border:#333;
+          --panel-shadow: rgba(0,0,0,0.5);
+      }
+      *{ box-sizing:border-box; }
+      body{
+          margin:0; font-family:'Roboto',sans-serif; background:var(--bg-color);
+          color:var(--text-color); display:flex; justify-content:center;
+          align-items:flex-start; min-height:100vh; padding:10px;
+      }
+      .container{
+          width:100%; max-width:1000px; background:#000; border:2px solid var(--panel-border);
+          border-radius:10px; padding:10px; box-shadow:0 0 20px var(--panel-shadow);
+      }
+      nav{
+          display:flex; flex-wrap:wrap; border-bottom:2px solid var(--panel-border); margin-bottom:15px;
+      }
+      nav a{
+          flex:1; min-width:120px; text-align:center; padding:10px; color:var(--text-color);
+          text-decoration:none; font-family:'Orbitron',sans-serif; font-weight:500;
+          border-bottom:3px solid transparent; transition:all .3s ease;
+      }
+      nav a.active{ color:var(--accent-yellow); border-bottom-color:var(--accent-yellow); }
+      .map-section{
+          background:var(--panel-color); border-radius:8px; border:1px solid var(--panel-border); padding:10px;
+      }
+      .speed-bar{
+          display:flex; justify-content:center; gap:10px; align-items:baseline; background:#0b0b0b;
+          border:1px solid var(--panel-border); border-radius:10px; padding:8px 14px; margin-bottom:10px;
+      }
+      .speed-value{
+          font-family:'Orbitron',sans-serif; font-weight:900; letter-spacing:1px;
+          font-size:42px; line-height:1; color:var(--accent-yellow); text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+      }
+      .speed-unit{ font-family:'Orbitron',sans-serif; color:#cfd8ff; opacity:0.9; font-size:16px; }
+      .map-wrap{
+          border-radius:10px; border:1px solid var(--panel-border); overflow:hidden;
+          background:#0b0b0b; box-shadow: inset 0 0 8px rgba(255,195,0,0.08);
+      }
+      #map{ width:100%; height:460px; }
+      .info-bar{
+          display:flex; gap:10px; align-items:stretch; padding:10px; background:#0c0c0c;
+          border:1px solid var(--panel-border); border-radius:8px; margin-top:12px; flex-wrap:wrap;
+      }
+      .info-card{
+          flex:1; min-width:180px; background:#111; border:1px solid var(--panel-border);
+          border-radius:8px; padding:10px 12px; display:flex; flex-direction:column; gap:6px;
+      }
+      .info-label{ font-size:12px; color:#bbb; }
+      .info-value{ font-family:'Orbitron',sans-serif; font-size:18px; color:var(--accent-yellow); font-weight:700; }
+      .actions{ display:flex; gap:10px; align-items:center; margin-left:auto; }
+      .btn{
+          background:var(--accent-yellow); color:#111; border:1px solid #8c6d00; border-radius:8px;
+          padding:10px 14px; cursor:pointer; font-weight:900; transition: all .15s ease;
+          font-family: 'Roboto', sans-serif;
+      }
+      .btn:hover{ filter:brightness(1.05); }
+      .btn:active{ transform:translateY(1px); filter:brightness(1.0); }
+      .btn-secondary { background: #3a3a3a; color: #e0e0e0; border-color: #555; }
+      .btn-secondary:disabled {
+          background: #2a2a2a; color: #666; border-color: #444; cursor: not-allowed;
+      }
+      .laptimer-section {
+          margin-top: 14px; background: var(--panel-color); border: 1px solid var(--panel-border);
+          border-radius: 8px; display: flex; flex-direction: column;
+      }
+      .timer-display-wrap { text-align: center; padding: 12px 10px; border-bottom: 1px solid var(--panel-border); }
+      .total-time-display {
+          font-family: 'Orbitron', sans-serif; font-size: 18px; color: #bbb; margin-bottom: 6px;
+      }
+      .lap-count {
+          font-family: 'Orbitron', sans-serif; font-size: 16px; color: #bbb;
+          margin-bottom: 4px; letter-spacing: 1px;
+      }
+      .timer-display {
+          font-family: 'Orbitron', sans-serif; font-size: 48px; font-weight: 700;
+          color: var(--text-color); letter-spacing: 1.5px;
+      }
+      .laps-list-wrap {
+          flex-grow: 1; max-height: 200px; overflow-y: auto; padding: 4px 10px;
+      }
+      #lapList { list-style: none; padding: 0; margin: 0; font-family: 'Roboto', sans-serif; }
+      #lapList li {
+          display: flex; align-items: center; justify-content: space-between; padding: 9px 4px;
+          border-bottom: 1px solid #222; font-size: 16px;
+      }
+      #lapList li:first-child { font-weight: 700; color: var(--accent-yellow); }
+      #lapList .lap-num { color: #bbb; margin-right: auto; }
+      #lapList .lap-time { font-family: 'Orbitron', sans-serif; }
+      .lap-delete-btn {
+          background: #333; color: #aaa; border: 1px solid #555;
+          border-radius: 50%; width: 22px; height: 22px; margin-left: 15px; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          font-weight: bold; line-height: 1; padding: 0; transition: all 0.2s ease;
+      }
+      .lap-delete-btn:hover { background: var(--accent-red); color: white; }
+      .laps-list-wrap::-webkit-scrollbar { width: 6px; }
+      .laps-list-wrap::-webkit-scrollbar-track { background: #1a1a1a; }
+      .laps-list-wrap::-webkit-scrollbar-thumb { background-color: #555; border-radius: 6px; }
+      .btn-stop {
+          background: var(--accent-red) !important; border-color: #a31f2b !important; color: white !important;
+      }
+      .laptimer-setup {
+          display: flex; gap: 10px; padding: 10px; background: #111;
+          border-bottom: 1px solid var(--panel-border); align-items: center; flex-wrap: wrap;
+      }
+      .laptimer-setup .label {
+          font-family: 'Orbitron', sans-serif; font-size: 14px;
+      }
+      .mode-selection {
+          display: flex; gap: 15px; align-items: center; margin-left: auto;
+      }
+      .mode-selection label {
+          display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 14px;
+      }
+      @media (max-width:768px){
+          #map{ height:400px; } .speed-value{ font-size:34px; } .timer-display { font-size: 38px; }
+      }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav>
+            <a href="./dashboard.html">Main Dashboard</a>
+            <a href="./sensor.html">Sensor data</a>
+            <a href="./gps.html" class="active">GPS</a>
+            <a href="./accel.html">가속도</a>
+        </nav>
+
+        <section class="map-section">
+            <div class="speed-bar" aria-live="polite">
+                <div id="speedVal" class="speed-value">--.-</div>
+                <div class="speed-unit">km/h</div>
+            </div>
+            <div class="map-wrap">
+                <div id="map"></div>
+            </div>
+            <div class="info-bar">
+                <div class="info-card">
+                    <div class="info-label">고도</div>
+                    <div id="altVal" class="info-value">-- m</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-label">방향</div>
+                    <div id="headVal" class="info-value">--°</div>
+                </div>
+                <div class="actions">
+                    <button id="btnReset" class="btn" title="기록된 이동경로를 지웁니다">이동경로 초기화</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="laptimer-section">
+            <div class="laptimer-setup">
+                <div class="label">Lap Timer Mode</div>
+                <div class="mode-selection">
+                    <label><input type="radio" name="lapMode" value="gps" id="radioGpsMode" checked> 🛰️ GPS</label>
+                    <label><input type="radio" name="lapMode" value="light" id="radioLightMode"> 🔦 Light Sensor</label>
+                    <label><input type="radio" name="lapMode" value="manual" id="radioManualMode">  MANUAL</label>
+                </div>
+            </div>
+            <div class="laptimer-setup" id="gpsSetupPanel">
+                <div class="label">GPS Finish Line</div>
+                <button id="btnSetStart" class="btn btn-secondary">시작점</button>
+                <button id="btnSetFinish" class="btn btn-secondary">종료점</button>
+                <button id="btnClearLine" class="btn btn-secondary">지우기</button>
+            </div>
+            <div class="timer-display-wrap">
+                <div id="totalTimeDisplay" class="total-time-display">Total 00:00.000</div>
+                <div id="lapCount" class="lap-count">LAP 1</div>
+                <div id="timerDisplay" class="timer-display">00:00.000</div>
+            </div>
+            <div class="laps-list-wrap">
+                <ul id="lapList"></ul>
+            </div>
+            <div class="info-bar" style="margin-top:0;">
+                <div class="actions" style="width:100%; justify-content:flex-end;">
+                    <button id="btnLapSave" class="btn btn-secondary" title="측정된 랩타임을 파일로 저장합니다">저장</button>
+                    <button id="btnLapReset" class="btn btn-secondary" title="랩타임 기록을 초기화합니다">초기화</button>
+                    <button id="btnManualLap" class="btn btn-secondary" title="수동으로 랩을 기록합니다">Lap</button>
+                    <button id="btnLapAction" class="btn" title="랩타임 측정을 시작합니다">시작</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+    /* global L */
+    document.addEventListener('DOMContentLoaded', function () {
+        // --- 네비게이션, 지도, GPS UI 요소 준비 ---
+        const links = document.querySelectorAll('nav a');
+        const current = window.location.pathname.split('/').pop() || 'gps.html';
+        links.forEach(a => { if (a.getAttribute('href').includes(current)) a.classList.add('active'); });
+
+        const map = L.map('map', { zoomControl: true }).setView([37.5665, 126.9780], 15);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        let marker = null;
+        let trackLine = L.polyline([], { color: '#ffc300', weight: 4, opacity: 0.9 }).addTo(map);
+        const toNum = v => Number.isFinite(Number(v)) ? Number(v) : undefined;
+        const speedEl = document.getElementById('speedVal');
+        const altEl = document.getElementById('altVal');
+        const headEl = document.getElementById('headVal');
+        const btnReset = document.getElementById('btnReset');
+        
+        function renderGps({ lat, lon, spd, alt, hdg }) {
+            if (lat !== undefined && lon !== undefined) {
+                const ll = L.latLng(lat, lon);
+                if (!marker) {
+                    marker = L.marker(ll).addTo(map);
+                    map.setView(ll, 17, { animate: false });
+                } else { marker.setLatLng(ll); }
+                const last = trackLine.getLatLngs().slice(-1)[0];
+                if (!last || !last.equals(ll)) { trackLine.addLatLng(ll); }
+            }
+            speedEl.textContent = spd !== undefined ? spd.toFixed(1) : "--.-";
+            altEl.textContent = alt !== undefined ? `${alt.toFixed(1)} m` : "-- m";
+            headEl.textContent = hdg !== undefined ? `${hdg.toFixed(0)}°` : "--°";
+        }
+        
+        btnReset.addEventListener('click', () => {
+            trackLine.setLatLngs([]);
+            localStorage.removeItem('mf25_gps_track');
+        });
+
+        // --- 랩타이머 UI 및 상태 변수 ---
+        const lapListEl = document.getElementById('lapList');
+        const timerDisplayEl = document.getElementById('timerDisplay');
+        const lapCountDisplayEl = document.getElementById('lapCount');
+        const actionBtn = document.getElementById('btnLapAction');
+        const manualLapBtn = document.getElementById('btnManualLap');
+        const resetBtn = document.getElementById('btnLapReset');
+        const saveBtn = document.getElementById('btnLapSave');
+        const totalTimeDisplayEl = document.getElementById('totalTimeDisplay');
+        let timerState = { isArmed: false, isRunning: false, startTime: 0, lastLapTime: 0, requestID: null, laps: [] };
+
+        // --- GPS 랩타이머 변수 및 UI ---
+        let startFinishLine = { start: null, finish: null };
+        let settingMode = null;
+        let finishLineLayer = L.polyline([], { color: 'red', weight: 5, opacity: 0.8 }).addTo(map);
+        let lastGpsPoint = null;
+        let crossedLineTime = 0;
+        const btnSetStart = document.getElementById('btnSetStart');
+        const btnSetFinish = document.getElementById('btnSetFinish');
+        const btnClearLine = document.getElementById('btnClearLine');
+        const gpsSetupPanel = document.getElementById('gpsSetupPanel');
+
+        // --- 모드 선택 UI 및 상태 변수 ---
+        const radioGpsMode = document.getElementById('radioGpsMode');
+        const radioLightMode = document.getElementById('radioLightMode');
+        const radioManualMode = document.getElementById('radioManualMode');
+        let lapTriggerMode = 'gps';
+
+        // --- 기능 함수 (랩타이머, GPS 설정 등) ---
+        // ▼▼▼ 누락되었던 함수들의 실제 내용을 모두 채워 넣습니다 ▼▼▼
+        function formatTime(ms) {
+            const minutes = Math.floor(ms / 60000);
+            const seconds = Math.floor((ms % 60000) / 1000);
+            const milliseconds = Math.floor(ms % 1000);
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
+        }
+        
+        function renderLaps() {
+            lapListEl.innerHTML = '';
+            [...timerState.laps].reverse().forEach(lap => {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <span class="lap-num">Lap ${lap.lap}</span>
+                    <span class="lap-time">${formatTime(lap.time)}</span>
+                    <button class="lap-delete-btn" data-lap-number="${lap.lap}" title="Delete this lap">×</button>
+                `;
+                lapListEl.appendChild(li);
+            });
+        }
+
+        function updateTimer() {
+            if (!timerState.isRunning) return;
+            const now = performance.now();
+            const totalElapsedTime = now - timerState.startTime;
+            const currentLapElapsedTime = now - timerState.lastLapTime;
+            totalTimeDisplayEl.textContent = 'Total ' + formatTime(totalElapsedTime);
+            timerDisplayEl.textContent = formatTime(currentLapElapsedTime);
+            timerState.requestID = requestAnimationFrame(updateTimer);
+        }
+
+        function armTimer() {
+            if (timerState.isArmed) return;
+            resetTimer(false);
+            timerState.isArmed = true;
+            actionBtn.textContent = '중지';
+            actionBtn.classList.add('btn-stop');
+            lapCountDisplayEl.textContent = `Waiting for Start...`;
+        }
+        
+        function stopTimer() {
+            if (!timerState.isArmed) return;
+            if (timerState.requestID) { cancelAnimationFrame(timerState.requestID); }
+            timerState.isArmed = false;
+            timerState.isRunning = false;
+            actionBtn.textContent = '시작';
+            actionBtn.classList.remove('btn-stop');
+        }
+
+        function resetTimer(fullStop = true) {
+            if(fullStop) stopTimer();
+            timerState.laps = [];
+            timerState.startTime = 0;
+            timerState.lastLapTime = 0;
+            timerDisplayEl.textContent = '00:00.000';
+            totalTimeDisplayEl.textContent = 'Total 00:00.000';
+            lapCountDisplayEl.textContent = 'LAP 1';
+            renderLaps();
+        }
+
+        function saveLaps() {
+            if (timerState.laps.length === 0) { alert('저장할 랩타임 기록이 없습니다.'); return; }
+            let content = "Lap,Time\n";
+            timerState.laps.forEach(lap => { content += `${lap.lap},${formatTime(lap.time)}\n`; });
+            const blob = new Blob([content], { type: 'text/csv;charset=utf-8,' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            const filename = `lap_times_${new Date().toISOString().slice(0,19).replace('T','_').replace(/:/g,'-')}.csv`;
+            link.setAttribute("download", filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function deleteLap(lapNumber) {
+            timerState.laps = timerState.laps.filter(lap => lap.lap !== lapNumber);
+            timerState.laps.forEach((lap, index) => {
+                lap.lap = index + 1;
+            });
+            renderLaps();
+            console.log(`Lap ${lapNumber} deleted.`);
+        }
+
+        function updateFinishLine() {
+            const points = [];
+            if (startFinishLine.start) points.push(startFinishLine.start);
+            if (startFinishLine.finish) points.push(startFinishLine.finish);
+            finishLineLayer.setLatLngs(points);
+        }
+
+        function checkLineIntersection(line1, line2) {
+            const p0 = line1.start, p1 = line1.end, p2 = line2.start, p3 = line2.end;
+            const s1_x = p1.lng - p0.lng, s1_y = p1.lat - p0.lat;
+            const s2_x = p3.lng - p2.lng, s2_y = p3.lat - p2.lat;
+            const s = (-s1_y * (p0.lng - p2.lng) + s1_x * (p0.lat - p2.lat)) / (-s2_x * s1_y + s1_x * s2_y);
+            const t = ( s2_x * (p0.lat - p2.lat) - s2_y * (p0.lng - p2.lng)) / (-s2_x * s1_y + s1_x * s2_y);
+            return (s >= 0 && s <= 1 && t >= 0 && t <= 1);
+        }
+        
+        function updateUIMode() {
+            if (lapTriggerMode === 'gps') {
+                gpsSetupPanel.style.display = 'flex';
+                manualLapBtn.style.display = 'none';
+            } else if (lapTriggerMode === 'light') {
+                gpsSetupPanel.style.display = 'none';
+                manualLapBtn.style.display = 'none';
+            } else if (lapTriggerMode === 'manual') {
+                gpsSetupPanel.style.display = 'none';
+                manualLapBtn.style.display = 'inline-flex';
+            }
+        }
+        
+        // --- 이벤트 리스너 ---
+        [radioGpsMode, radioLightMode, radioManualMode].forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                lapTriggerMode = e.target.value;
+                updateUIMode();
+            });
+        });
+        
+        manualLapBtn.addEventListener('click', () => { 
+            if (timerState.isArmed) { 
+                handleLapSignal(); 
+            } 
+        });
+
+        btnSetStart.addEventListener('click', () => { settingMode = 'start'; });
+        btnSetFinish.addEventListener('click', () => { settingMode = 'finish'; });
+        btnClearLine.addEventListener('click', () => {
+            startFinishLine.start = null;
+            startFinishLine.finish = null;
+            updateFinishLine();
+        });
+        map.on('click', function(e) {
+            if (settingMode === 'start') startFinishLine.start = e.latlng;
+            else if (settingMode === 'finish') startFinishLine.finish = e.latlng;
+            updateFinishLine();
+            settingMode = null;
+        });
+        actionBtn.addEventListener('click', () => { timerState.isArmed ? stopTimer() : armTimer(); });
+        resetBtn.addEventListener('click', () => resetTimer(true));
+        saveBtn.addEventListener('click', saveLaps);
+        lapListEl.addEventListener('click', function(e) {
+            if (e.target && e.target.classList.contains('lap-delete-btn')) {
+                const lapNumberToDelete = parseInt(e.target.dataset.lapNumber, 10);
+                if (!isNaN(lapNumberToDelete)) {
+                    deleteLap(lapNumberToDelete);
+                }
+            }
+        });
+
+        // --- Socket.IO 데이터 수신 로직 ---
+        const socket = io();
+        socket.on('connect', () => console.log('서버에 성공적으로 연결되었습니다.'));
+        
+        const handleLapSignal = () => {
+            if (!timerState.isArmed) return;
+            const now = performance.now();
+            if (!timerState.isRunning) {
+                timerState.isRunning = true;
+                timerState.startTime = now;
+                timerState.lastLapTime = now;
+                lapCountDisplayEl.textContent = 'LAP 1';
+                updateTimer();
+            } else {
+                const lapTime = now - timerState.lastLapTime;
+                const currentLapNumber = timerState.laps.length + 1;
+                timerState.laps.push({ lap: currentLapNumber, time: lapTime });
+                timerState.lastLapTime = now;
+                lapCountDisplayEl.textContent = `LAP ${currentLapNumber + 1}`;
+                renderLaps();
+            }
+        };
+
+        socket.on('telemetry_update', (data) => {
+            if (data && data.gps && data.gps.lat) {
+                const currentGpsPoint = L.latLng(data.gps.lat, data.gps.lon);
+                renderGps({ lat: data.gps.lat, lon: data.gps.lon, spd: data.can?.VSS_kmh ?? data.gps.GPS_Speed_KPH, alt: data.gps.altitude, hdg: data.gps.heading });
+
+                if (lapTriggerMode === 'gps' && lastGpsPoint && startFinishLine.start && startFinishLine.finish) {
+                    const vehiclePath = { start: lastGpsPoint, end: currentGpsPoint };
+                    const finishLine = { start: startFinishLine.start, end: startFinishLine.finish };
+                    if (checkLineIntersection(vehiclePath, finishLine)) {
+                        if (performance.now() - crossedLineTime > 5000) {
+                            crossedLineTime = performance.now();
+                            handleLapSignal();
+                        }
+                    }
+                }
+                lastGpsPoint = currentGpsPoint;
+            }
+        });
+        
+        socket.on('lap_time_update', (data) => {
+            if (lapTriggerMode === 'light') {
+                console.log('Lap time data from Arduino received:', data);
+                handleLapSignal();
+            }
+        });
+
+        updateUIMode(); // 초기 UI 상태 설정
+    });
+    </script>
+</body>
+</html>
