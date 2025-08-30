@@ -2,7 +2,8 @@
 ## 프로젝트 소개
 
 순천향대학교 자작자동차 동아리 **무한질주** MF-25 차량의 데이터를 로깅하기위한 프로젝트입니다.
-<img width="2808" height="3744" alt="image" src="https://github.com/user-attachments/assets/0eb820fa-982d-4bd3-a8e7-f82300c01d41" />
+<img width="1404" height="1872" alt="image" src="https://github.com/user-attachments/assets/0eb820fa-982d-4bd3-a8e7-f82300c01d41" />
+![KakaoTalk_20250830_125350162_01](https://github.com/user-attachments/assets/f7ca9995-968d-45d5-be5e-0d802b785156)
 
 
 라즈베리파이를 이용하여 차량의 ECU(EMU BLACK)으로부터 CAN메시지를 로깅하고 GPS, ADXL345 센서를 활용하여 차량의 데이터를 실시간으로 수집하여 MQTT를 통해 원격 웹 대시보드에 시각화하는 프로젝트입니다.
