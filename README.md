@@ -18,7 +18,7 @@
 ---
 ## 시스템 아키텍처
 
-1.  **데이터 수집 (라즈베리파이 - `main.py`)**: CAN, GPS, IMU 센서 데이터를 읽어와 통합 JSON 객체로 만듭니다.
+1.  **데이터 수집 (라즈베리파이 - `main.py`)**: CAN, GPS, ADXL345 센서 데이터를 읽어와 통합 JSON 객체로 만듭니다.
 2.  **데이터 발행 (MQTT)**: `main.py`가 통합된 데이터를 인터넷의 MQTT 브로커로 발행(Publish)합니다.
 3.  **데이터 구독 (서버 - `telemetry_server.py`)**: Flask 웹 서버가 같은 MQTT 브로커에 접속하여 데이터를 구독(Subscribe)합니다.
 4.  **실시간 시각화 (Flask + Socket.IO)**: 서버는 수신한 데이터를 즉시 Socket.IO를 통해 연결된 모든 웹 클라이언트(브라우저)에게 전달합니다.
@@ -29,7 +29,7 @@
 
 1.  **소스 코드 복제 및 라이브러리 설치**:
     ```bash
-    git clone <YOUR_REPOSITORY_URL>
+    git clone https://github.com/hackisha/EMU-LOGGER.git
     cd EMU-LOGGER
     pip3 install -r requirements.txt
     ```
