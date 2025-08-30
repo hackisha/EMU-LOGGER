@@ -1,14 +1,18 @@
 # Real-time EMU-BLACK Data Logger
+## 프로젝트 소개
 
-라즈베리파이와 CAN, GPS, IMU 센서를 활용하여 차량의 데이터를 실시간으로 수집하고, MQTT를 통해 원격 웹 대시보드에 시각화하는 프로젝트입니다.
+순천향대학교 자작자동차 동아리 **무한질주** MF-25 차량의 데이터를 로깅하기위한 프로젝트입니다.
+<img width="2808" height="3744" alt="image" src="https://github.com/user-attachments/assets/0eb820fa-982d-4bd3-a8e7-f82300c01d41" />
 
+
+라즈베리파이를 이용하여 차량의 ECU(EMU BLACK)으로부터 CAN메시지를 로깅하고 GPS, ADXL345 센서를 활용하여 차량의 데이터를 실시간으로 수집하여 MQTT를 통해 원격 웹 대시보드에 시각화하는 프로젝트입니다.
 
 *대시보드 스크린샷*
 
 ---
 ## 주요 기능
 
-* **실시간 데이터 수집**: CAN 버스를 통해 ECU 데이터(RPM, 속도, 온도 등)와 GPS, 가속도계(IMU) 데이터를 실시간으로 수집합니다.
+* **실시간 데이터 수집**: CAN 버스를 통해 ECU 데이터(RPM, 속도, 온도 등)와 GPS, 가속도계(ADXL345) 데이터를 실시간으로 수집합니다.
 * **원격 데이터 전송**: 수집된 데이터를 MQTT 프로토콜을 사용하여 인터넷을 통해 원격 서버로 전송합니다.
 * **웹 기반 대시보드**: Flask와 Socket.IO로 구축된 동적 웹 대시보드를 통해 어디서든 차량 상태를 실시간으로 모니터링할 수 있습니다.
 * **원격 접속 터널링**: ngrok을 사용하여 고정 IP 없이도 외부 인터넷에서 라즈베리파이 서버에 안전하게 접속할 수 있습니다.
@@ -64,9 +68,6 @@
 * GPS 수신기 모듈 (NEO-7M 등)
 * 가속도 센서 (ADXL345)
 
-### 소프트웨어 설정
-`Get Started` 섹션의 내용을 참조하세요. `app/config.py` 파일을 열어 본인의 하드웨어 및 MQTT 설정에 맞게 값을 수정할 수 있습니다.
-
 ---
 ## 사용법
 
@@ -86,20 +87,4 @@
     journalctl -u ngrok.service -f
     ```
 ---
-## 파일 구조
-```
-EMU-LOGGER/
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── config.py
-│   ├── telemetry_server.py
-│   ├── ... (workers)
-│   ├── dashboard/
-│   └── static/
-├── systemd/
-├── .gitignore
-├── requirements.txt
-└── README.md
-```
 
