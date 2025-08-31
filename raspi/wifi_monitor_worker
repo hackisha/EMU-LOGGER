@@ -1,0 +1,22 @@
+import socket
+import threading
+import time
+from .gpio_ctrl import GpioController
+
+def wifi_monitor_worker(gpio: GpioController, stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            # 8.8.8.8 (Google DNS) 53번 포트로 소켓 연결을 시도하여 인터넷 연결 확인
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+            gpio.set_wifi_led(True)
+        except OSError:
+            gpio.set_wifi_led(False)
+
+        # 10초 대기
+        stop_event.wait(10)
+
+def start_wifi_monitor(gpio: GpioController, stop_event: threading.Event) -> threading.Thread:
+    t = threading.Thread(target=wifi_monitor_worker, args=(gpio, stop_event), daemon=True)
+    t.start()
+    print("Wi-Fi 연결 모니터 스레드 시작.")
+    return t
