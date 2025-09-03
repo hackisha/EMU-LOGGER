@@ -253,13 +253,15 @@
         const saveBtn = document.getElementById('btnLapSave');
         const totalTimeDisplayEl = document.getElementById('totalTimeDisplay');
         let timerState = { isArmed: false, isRunning: false, startTime: 0, lastLapTime: 0, requestID: null, laps: [] };
-
+        
         // --- GPS 랩타이머 변수 및 UI ---
         let startFinishLine = { start: null, finish: null };
         let settingMode = null;
         let finishLineLayer = L.polyline([], { color: 'red', weight: 5, opacity: 0.8 }).addTo(map);
         let lastGpsPoint = null;
         let crossedLineTime = 0;
+        let lastArduinoSignalTime = 0;
+        let lastManualSignalTime = 0;
         const btnSetStart = document.getElementById('btnSetStart');
         const btnSetFinish = document.getElementById('btnSetFinish');
         const btnClearLine = document.getElementById('btnClearLine');
@@ -272,14 +274,12 @@
         let lapTriggerMode = 'gps';
 
         // --- 기능 함수 (랩타이머, GPS 설정 등) ---
-        // ▼▼▼ 누락되었던 함수들의 실제 내용을 모두 채워 넣습니다 ▼▼▼
         function formatTime(ms) {
             const minutes = Math.floor(ms / 60000);
             const seconds = Math.floor((ms % 60000) / 1000);
             const milliseconds = Math.floor(ms % 1000);
             return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
         }
-        
         function renderLaps() {
             lapListEl.innerHTML = '';
             [...timerState.laps].reverse().forEach(lap => {
@@ -292,7 +292,6 @@
                 lapListEl.appendChild(li);
             });
         }
-
         function updateTimer() {
             if (!timerState.isRunning) return;
             const now = performance.now();
@@ -302,7 +301,6 @@
             timerDisplayEl.textContent = formatTime(currentLapElapsedTime);
             timerState.requestID = requestAnimationFrame(updateTimer);
         }
-
         function armTimer() {
             if (timerState.isArmed) return;
             resetTimer(false);
@@ -311,7 +309,6 @@
             actionBtn.classList.add('btn-stop');
             lapCountDisplayEl.textContent = `Waiting for Start...`;
         }
-        
         function stopTimer() {
             if (!timerState.isArmed) return;
             if (timerState.requestID) { cancelAnimationFrame(timerState.requestID); }
@@ -320,7 +317,6 @@
             actionBtn.textContent = '시작';
             actionBtn.classList.remove('btn-stop');
         }
-
         function resetTimer(fullStop = true) {
             if(fullStop) stopTimer();
             timerState.laps = [];
@@ -331,7 +327,6 @@
             lapCountDisplayEl.textContent = 'LAP 1';
             renderLaps();
         }
-
         function saveLaps() {
             if (timerState.laps.length === 0) { alert('저장할 랩타임 기록이 없습니다.'); return; }
             let content = "Lap,Time\n";
@@ -347,23 +342,19 @@
             link.click();
             document.body.removeChild(link);
         }
-
         function deleteLap(lapNumber) {
             timerState.laps = timerState.laps.filter(lap => lap.lap !== lapNumber);
             timerState.laps.forEach((lap, index) => {
                 lap.lap = index + 1;
             });
             renderLaps();
-            console.log(`Lap ${lapNumber} deleted.`);
         }
-
         function updateFinishLine() {
             const points = [];
             if (startFinishLine.start) points.push(startFinishLine.start);
             if (startFinishLine.finish) points.push(startFinishLine.finish);
             finishLineLayer.setLatLngs(points);
         }
-
         function checkLineIntersection(line1, line2) {
             const p0 = line1.start, p1 = line1.end, p2 = line2.start, p3 = line2.end;
             const s1_x = p1.lng - p0.lng, s1_y = p1.lat - p0.lat;
@@ -372,7 +363,6 @@
             const t = ( s2_x * (p0.lat - p2.lat) - s2_y * (p0.lng - p2.lng)) / (-s2_x * s1_y + s1_x * s2_y);
             return (s >= 0 && s <= 1 && t >= 0 && t <= 1);
         }
-        
         function updateUIMode() {
             if (lapTriggerMode === 'gps') {
                 gpsSetupPanel.style.display = 'flex';
@@ -394,12 +384,6 @@
             });
         });
         
-        manualLapBtn.addEventListener('click', () => { 
-            if (timerState.isArmed) { 
-                handleLapSignal(); 
-            } 
-        });
-
         btnSetStart.addEventListener('click', () => { settingMode = 'start'; });
         btnSetFinish.addEventListener('click', () => { settingMode = 'finish'; });
         btnClearLine.addEventListener('click', () => {
@@ -444,7 +428,9 @@
                 timerState.laps.push({ lap: currentLapNumber, time: lapTime });
                 timerState.lastLapTime = now;
                 lapCountDisplayEl.textContent = `LAP ${currentLapNumber + 1}`;
+                timerDisplayEl.textContent = formatTime(lapTime);
                 renderLaps();
+                socket.emit('lap_count_update', { currentLap: currentLapNumber });
             }
         };
 
@@ -470,6 +456,22 @@
         socket.on('lap_time_update', (data) => {
             if (lapTriggerMode === 'light') {
                 console.log('Lap time data from Arduino received:', data);
+                // 디바운스 로직 추가
+                const now = performance.now();
+                if (now - lastArduinoSignalTime > 2000) {
+                    lastArduinoSignalTime = now;
+                    handleLapSignal();
+                }
+            }
+        });
+
+        manualLapBtn.addEventListener('click', () => {
+            if (lapTriggerMode !== 'manual' || !timerState.isArmed) return;
+
+            const now = performance.now();
+            if (now - lastManualSignalTime > 1000) { // 1초 이내 중복 클릭 방지
+                lastManualSignalTime = now;
+                console.log("Manual lap signal triggered.");
                 handleLapSignal();
             }
         });
