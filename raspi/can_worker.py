@@ -89,18 +89,35 @@ def parse_emu_frame_7(data: bytes) -> Dict[str, Any]:
         })
     return parsed
 
+def parse_custom_frame_500(data: bytes) -> Dict[str, Any]:
+    """ID 0x500의 커스텀 데이터를 파싱합니다."""
+    if len(data) < 2: return {} # 최소 2바이트 데이터 필요
+    
+    # ADU 설정: Little Endian('<'), Unsigned 8bit('B')
+    # Multiplier=10, Decimal=1 이므로 10으로 나눔
+    
+    # Byte 0: diffOilTemp -> EOT_OUT으로 매핑
+    diff_oil_temp = struct.unpack_from('<B', data, 0)[0] 
+    
+    # Byte 1: powersteerTemp -> fuelPumpTemp으로 매핑
+    powersteer_temp = struct.unpack_from('<B', data, 1)[0]
+    
+    return {
+        "EOT_OUT": diff_oil_temp,
+        "fuelPumpTemp": powersteer_temp
+    }
+
 # 파서 딕셔너리
 _PARSERS = {
     EMU_ID_BASE + 0: parse_emu_frame_0, EMU_ID_BASE + 1: parse_emu_frame_1,
     EMU_ID_BASE + 2: parse_emu_frame_2, EMU_ID_BASE + 3: parse_emu_frame_3,
     EMU_ID_BASE + 4: parse_emu_frame_4, EMU_ID_BASE + 5: parse_emu_frame_5,
     EMU_ID_BASE + 6: parse_emu_frame_6, EMU_ID_BASE + 7: parse_emu_frame_7,
+    0x500: parse_custom_frame_500
 }
 
 class CanWorker:
-    """
-    CAN 버스에서 EMU 데이터를 수신, 파싱하고 콜백으로 전달합니다.
-    """
+	#CAN 버스에서 EMU 및 커스텀 데이터를 수신, 파싱하고 콜백으로 전달
     def __init__(
         self,
         channel: str = CAN_CHANNEL,
@@ -113,7 +130,7 @@ class CanWorker:
         self.bus: Optional[can.BusABC] = None
 
     def start(self):
-        """CAN 인터페이스를 활성화하고 버스를 초기화합니다."""
+        #CAN 인터페이스를 활성화하고 버스를 초기화
         print(f"CAN 인터페이스({self.channel}) 활성화 시도...")
         os.system(f'sudo ip link set {self.channel} down')
         if os.system(f'sudo ip link set {self.channel} up type can bitrate {self.bitrate}') != 0:
@@ -128,11 +145,11 @@ class CanWorker:
         msg = self.bus.recv(timeout=timeout)
         if msg is None:
             return
-
+        
         parser = _PARSERS.get(msg.arbitration_id)
         if not parser:
             return
-
+            
         parsed_data = parser(msg.data)
         if not parsed_data:
             return
@@ -140,6 +157,23 @@ class CanWorker:
         if self.on_message:
             self.on_message(msg.arbitration_id, parsed_data)
 
+    def send_message(self, arb_id: int, data: bytes, is_extended: bool = False):
+        """주어진 ID와 데이터로 CAN 메시지를 전송합니다."""
+        if not self.bus:
+            print("[CanWorker] CAN bus is not available to send a message.")
+            return
+
+        try:
+            message = can.Message(
+                arbitration_id=arb_id,
+                data=data,
+                is_extended_id=is_extended
+            )
+            self.bus.send(message)
+            # print(f"[CanWorker] Sent message -> ID: {arb_id:03X}, Data: {data.hex()}")
+        except can.CanError as e:
+            print(f"[CanWorker] Failed to send CAN message: {e}")
+    
     def shutdown(self):
         if self.bus:
             self.bus.shutdown()
