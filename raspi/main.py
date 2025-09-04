@@ -1,3 +1,5 @@
+# main.py (데이터 송신 전용, ADXL345 사용, 모든 기능 포함)
+
 import os
 import sys
 import csv
@@ -24,7 +26,7 @@ from .accel_worker import AccelWorker
 exit_event = threading.Event()
 logging_active = False
 last_button_press_time = 0.0
-last_sent_lap = 0 # 마지막으로 ADU에 보낸 랩 카운트 저장
+last_sent_lap = 0
 
 # 데이터 저장소
 latest_can_data = {}
@@ -50,40 +52,85 @@ def on_accel_update(parsed: dict):
 
 # ======== 핵심 로직 ========
 def toggle_logging_state(gpio: GpioController):
-    # (기존과 동일)
-    pass
+    global logging_active, csv_file, csv_writer
+    logging_active = not logging_active
+    if logging_active:
+        gpio.set_logging_led(True)
+        os.makedirs(LOG_DIR, exist_ok=True)
+        filename = f"{LOG_DIR}/datalog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        print(f"\n[INFO] 로깅 시작 -> {filename}")
+        csv_file = open(filename, 'w', newline='', encoding='utf-8')
+        fieldnames = [
+            "Timestamp", "Latitude", "Longitude", "GPS_Speed_KPH", "Satellites", "Altitude_m", "Heading_deg",
+            "RPM","TPS_percent","IAT_C","MAP_kPa","PulseWidth_ms","AnalogIn1_V","AnalogIn2_V","AnalogIn3_V","AnalogIn4_V",
+            "VSS_kmh","Baro_kPa","OilTemp_C","OilPressure_bar","FuelPressure_bar","CLT_C","IgnAngle_deg","DwellTime_ms",
+            "WBO_Lambda","LambdaCorrection_percent","EGT1_C","EGT2_C","Gear","EmuTemp_C","Batt_V","CEL_Error","Flags1",
+            "Ethanol_percent","DBW_Pos_percent","DBW_Target_percent","TC_drpm_raw","TC_drpm","TC_TorqueReduction_percent",
+            "PitLimit_TorqueReduction_percent","AnalogIn5_V","AnalogIn6_V","OutFlags1","OutFlags2","OutFlags3","OutFlags4",
+            "BoostTarget_kPa","PWM1_DC_percent","DSG_Mode","LambdaTarget","PWM2_DC_percent","FuelUsed_L",
+            "ax_g", "ay_g", "az_g", "gx_dps", "gy_dps", "gz_dps"
+        ]
+        csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction='ignore')
+        csv_writer.writeheader()
+    else:
+        print("\n[INFO] 로깅 중지.")
+        gpio.set_logging_led(False)
+        if csv_file:
+            name = csv_file.name
+            csv_file.close()
+            print(f"[INFO] 로그 파일 저장 완료: {name}")
+        csv_file = None
+        csv_writer = None
 
 def write_csv_log_entry(gpio: GpioController):
-    # (기존과 동일)
-    pass
+    if not logging_active or not csv_writer:
+        return
+    full_row = { "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] }
+    full_row.update(latest_gps_data)
+    full_row.update(latest_can_data)
+    full_row.update(latest_acc_data)
+    csv_writer.writerow(full_row)
+    gpio.blink_logging_led_once()
 
 def print_status_line():
-    """터미널에 현재 상태를 한 줄로 출력합니다."""
     global last_sent_lap
     gps_status = "OK" if latest_gps_data.get("gps_fix") else "No Fix"
     rpm = latest_can_data.get('RPM', 0)
     vss = latest_can_data.get('VSS_kmh', 0.0)
     logging_status = "ON" if logging_active else "OFF"
-
-    #  출력 형식에 Lap Count 추가 
     status_text = (
         f"RPM:{rpm:>5} | VSS:{vss:>5.1f}km/h | GPS:{gps_status} | Logging:{logging_status} | Lap Sent:{last_sent_lap}"
     )
-    
     sys.stdout.write("\r" + status_text + "    ")
     sys.stdout.flush()
 
 def mqtt_uploader(mqtt: MqttClient, stop_event: threading.Event):
-    # (기존과 동일)
-    pass
+    while not stop_event.is_set():
+        data_to_publish = {
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            'can': latest_can_data,
+            'gps': latest_gps_data,
+            'accel': latest_acc_data
+        }
+        if latest_can_data or latest_gps_data or latest_acc_data:
+            mqtt.publish(MQTT_TOPICS["TELEMETRY"], json.dumps(data_to_publish))
+        stop_event.wait(MQTT_UPLOAD_INTERVAL_SEC)
 
 def handle_exit(signum, frame):
-    # (기존과 동일)
-    pass
+    print("\n[INFO] 종료 신호 수신. 리소스를 정리합니다...")
+    exit_event.set()
 
 def worker_loop(worker, stop_event: threading.Event):
-    # (기존과 동일)
-    pass
+    method_name = "recv_once" if hasattr(worker, "recv_once") else "read_once"
+    read_method = getattr(worker, method_name)
+    while not stop_event.is_set():
+        try:
+            read_method()
+        except Exception as e:
+            print(f"\n[ERROR] {type(worker).__name__} 스레드에서 오류 발생: {e}", file=sys.stderr)
+            if isinstance(e, (IOError, OSError)):
+                break
+        time.sleep(0.001)
 
 def main():
     """메인 실행 함수"""
@@ -106,24 +153,18 @@ def main():
     # --- main 함수 내부에 관련 함수들을 정의하여 can_worker에 쉽게 접근 ---
     def send_lap_to_adu(lap: int):
         global last_sent_lap
-        """랩 카운트를 CAN 메시지로 변환하여 ADU로 전송합니다."""
         try:
-            # 8비트 부호없는 정수로 패킹, Little Endian
             payload = struct.pack('<B', lap) 
             full_payload = payload.ljust(8, b'\x00')
-            
-            # ADU 설정에 맞는 CAN ID (예: 0x700)
             can_worker.send_message(0x700, full_payload)
-            last_sent_lap = lap # 마지막으로 보낸 랩 카운트 업데이트
+            last_sent_lap = lap
         except Exception as e:
             print(f"[main] ADU로 랩 카운트 전송 실패: {e}")
 
     def on_mqtt_message(client, userdata, msg):
-        """서버로부터 MQTT 메시지를 수신했을 때 호출될 콜백"""
         topic = msg.topic
         payload = msg.payload.decode('utf-8')
-        
-        command_topic = MQTT_TOPICS.get("COMMAND_LAP", "car/command/lap")
+        command_topic = MQTT_TOPICS.get("COMMAND_LAP", "vehicle/command/lap")
         if topic == command_topic:
             try:
                 data = json.loads(payload)
@@ -136,8 +177,8 @@ def main():
     
     # MQTT 클라이언트 콜백 및 구독 설정
     mqtt_client.client.on_message = on_mqtt_message
-    mqtt_client.connect() # connect가 loop_start를 호출
-    command_topic = MQTT_TOPICS.get("COMMAND_LAP", "car/command/lap")
+    mqtt_client.connect()
+    command_topic = MQTT_TOPICS.get("COMMAND_LAP", "vehicle/command/lap")
     mqtt_client.client.subscribe(command_topic)
     print(f"[MQTT] 랩 카운트 명령 구독 시작. Topic: {command_topic}")
 
@@ -151,7 +192,7 @@ def main():
         gpio.set_error_led(True)
         exit_event.set()
         return
-        
+
     # --- 스레드 생성 ---
     wifi_monitor_thread = threading.Thread(target=start_wifi_monitor, args=(gpio, exit_event), daemon=True)
     mqtt_thread = threading.Thread(target=mqtt_uploader, args=(mqtt_client, exit_event), daemon=True)
@@ -170,7 +211,7 @@ def main():
 
     if not exit_event.is_set():
         print("\n[INFO] 데이터 수집을 시작합니다. 버튼을 눌러 로깅을 제어하세요. (종료: Ctrl+C)")
-   # send_lap_to_adu(1) 랩타임 테스트용
+
     # --- 메인 루프 ---
     last_csv_write_time = 0.0
     try:
