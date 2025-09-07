@@ -20,10 +20,11 @@ class GpsWorker:
         self.on_update = on_update
         self.ser: Optional[serial.Serial] = None
         
-        #  수신된 GPS 데이터 조각을 임시로 저장할 변수 추가 
+        # 수신된 GPS 데이터 조각을 임시로 저장할 변수 추가
         self.temp_gps_data: Dict[str, Any] = {}
 
     def start(self):
+        """시리얼 포트를 엽니다."""
         try:
             self.ser = serial.Serial(self.port, baudrate=self.baudrate, timeout=0.1)
             print(f"GPS 포트({self.port}) 열기 성공.")
@@ -62,7 +63,7 @@ class GpsWorker:
                 self.temp_gps_data['satellites'] = int(msg.num_sats or 0)
                 self.temp_gps_data['gps_fix_type'] = msg.gps_qual
             
-            #  위도와 속도가 모두 수집되었는지 확인 
+            # 위도와 속도가 모두 수집되었는지 확인
             if self.temp_gps_data.get('lat') is not None and self.temp_gps_data.get('GPS_Speed_KPH') is not None:
                 if self.on_update:
                     # 모든 데이터를 복사하여 콜백으로 전달
