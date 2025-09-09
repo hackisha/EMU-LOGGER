@@ -10,6 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -175,9 +176,9 @@
             <div class="laptimer-setup">
                 <div class="label">Lap Timer Mode</div>
                 <div class="mode-selection">
-                    <label><input type="radio" name="lapMode" value="gps" id="radioGpsMode" checked> 🛰️ GPS</label>
-                    <label><input type="radio" name="lapMode" value="light" id="radioLightMode"> 🔦 Light Sensor</label>
-                    <label><input type="radio" name="lapMode" value="manual" id="radioManualMode">  MANUAL</label>
+                    <label><input type="radio" name="lapMode" value="gps" id="radioGpsMode" checked> GPS</label>
+                    <label><input type="radio" name="lapMode" value="light" id="radioLightMode"> Light Sensor</label>
+                    <label><input type="radio" name="lapMode" value="manual" id="radioManualMode">  수동</label>
                 </div>
             </div>
             <div class="laptimer-setup" id="gpsSetupPanel">
@@ -215,28 +216,12 @@
 
         const map = L.map('map', { zoomControl: true }).setView([37.5665, 126.9780], 15);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-        let marker = null;
+        let marker = null; // 마커 변수
         let trackLine = L.polyline([], { color: '#ffc300', weight: 4, opacity: 0.9 }).addTo(map);
-        const toNum = v => Number.isFinite(Number(v)) ? Number(v) : undefined;
         const speedEl = document.getElementById('speedVal');
         const altEl = document.getElementById('altVal');
         const headEl = document.getElementById('headVal');
         const btnReset = document.getElementById('btnReset');
-        
-        function renderGps({ lat, lon, spd, alt, hdg }) {
-            if (lat !== undefined && lon !== undefined) {
-                const ll = L.latLng(lat, lon);
-                if (!marker) {
-                    marker = L.marker(ll).addTo(map);
-                    map.setView(ll, 17, { animate: false });
-                } else { marker.setLatLng(ll); }
-                const last = trackLine.getLatLngs().slice(-1)[0];
-                if (!last || !last.equals(ll)) { trackLine.addLatLng(ll); }
-            }
-            speedEl.textContent = spd !== undefined ? spd.toFixed(1) : "--.-";
-            altEl.textContent = alt !== undefined ? `${alt.toFixed(1)} m` : "-- m";
-            headEl.textContent = hdg !== undefined ? `${hdg.toFixed(0)}°` : "--°";
-        }
         
         btnReset.addEventListener('click', () => {
             trackLine.setLatLngs([]);
@@ -274,12 +259,6 @@
         let lapTriggerMode = 'gps';
 
         // --- 기능 함수 (랩타이머, GPS 설정 등) ---
-        function formatTime(ms) {
-            const minutes = Math.floor(ms / 60000);
-            const seconds = Math.floor((ms % 60000) / 1000);
-            const milliseconds = Math.floor(ms % 1000);
-            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
-        }
         function renderLaps() {
             lapListEl.innerHTML = '';
             [...timerState.laps].reverse().forEach(lap => {
@@ -291,6 +270,33 @@
                 `;
                 lapListEl.appendChild(li);
             });
+        }
+        function formatTime(ms) {
+            const minutes = Math.floor(ms / 60000);
+            const seconds = Math.floor((ms % 60000) / 1000);
+            const milliseconds = Math.floor(ms % 1000);
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
+        }
+        function renderGps(gpsData) {
+            // 지도 관련 업데이트 (좌표값이 있을 때만 실행)
+            if (gpsData.Latitude != null && gpsData.Longitude != null) {
+                const ll = L.latLng(gpsData.Latitude, gpsData.Longitude);
+                if (!marker) {
+                    // 기본 L.marker로 변경. 회전 기능 없음.
+                    marker = L.marker(ll).addTo(map);
+                    map.setView(ll, 17, { animate: false });
+                } else {
+                    // 위치만 업데이트.
+                    marker.setLatLng(ll);
+                }
+                const last = trackLine.getLatLngs().slice(-1)[0];
+                if (!last || !last.equals(ll)) { trackLine.addLatLng(ll); }
+            }
+
+            // 정보창 업데이트 (각 데이터가 null이나 undefined가 아닐 때만 개별적으로 업데이트)
+            speedEl.textContent = gpsData.GPS_Speed_KPH != null ? gpsData.GPS_Speed_KPH.toFixed(1) : "--.-";
+            altEl.textContent = gpsData.Altitude_m != null ? `${gpsData.Altitude_m.toFixed(1)} m` : "-- m";
+            headEl.textContent = gpsData.Heading_deg != null ? `${gpsData.Heading_deg.toFixed(0)}°` : "--°";
         }
         function updateTimer() {
             if (!timerState.isRunning) return;
@@ -412,7 +418,7 @@
         // --- Socket.IO 데이터 수신 로직 ---
         const socket = io();
         socket.on('connect', () => console.log('서버에 성공적으로 연결되었습니다.'));
-        
+
         const handleLapSignal = () => {
             if (!timerState.isArmed) return;
             const now = performance.now();
@@ -435,20 +441,28 @@
         };
 
         socket.on('telemetry_update', (data) => {
-            if (data && data.gps && data.gps.lat) {
-                const currentGpsPoint = L.latLng(data.gps.lat, data.gps.lon);
-                renderGps({ lat: data.gps.lat, lon: data.gps.lon, spd: data.can?.VSS_kmh ?? data.gps.GPS_Speed_KPH, alt: data.gps.altitude, hdg: data.gps.heading });
+            console.log("Telemetry Data Received:", JSON.stringify(data, null, 2));
+            // 'gps' 객체와 좌표 데이터가 있는지 먼저 확인합니다.
+            if (data && data.gps && data.gps.Latitude != null) {
+                
+                // 1. GPS 데이터를 화면에 렌더링합니다.
+                renderGps(data.gps);
+
+                // 2. 랩타이머 관련 로직을 처리합니다.
+                const gpsData = data.gps;
+                const currentGpsPoint = L.latLng(gpsData.Latitude, gpsData.Longitude);
 
                 if (lapTriggerMode === 'gps' && lastGpsPoint && startFinishLine.start && startFinishLine.finish) {
                     const vehiclePath = { start: lastGpsPoint, end: currentGpsPoint };
                     const finishLine = { start: startFinishLine.start, end: startFinishLine.finish };
                     if (checkLineIntersection(vehiclePath, finishLine)) {
-                        if (performance.now() - crossedLineTime > 5000) {
+                        if (performance.now() - crossedLineTime > 5000) { // 5초 이내 중복 통과 방지
                             crossedLineTime = performance.now();
                             handleLapSignal();
                         }
                     }
                 }
+                // 마지막 GPS 위치를 다음 계산을 위해 업데이트합니다.
                 lastGpsPoint = currentGpsPoint;
             }
         });
