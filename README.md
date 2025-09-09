@@ -7,8 +7,10 @@
 
 
 라즈베리파이를 이용하여 차량의 ECU(EMU BLACK)으로부터 CAN메시지를 로깅하고 GPS, ADXL345 센서를 활용하여 차량의 데이터를 실시간으로 수집하여 MQTT를 통해 원격 웹 대시보드에 시각화하는 프로젝트입니다.
+<img width="1238" height="931" alt="image" src="https://github.com/user-attachments/assets/05fa3168-3098-4744-936e-5302c360c4ea" />
 
-*대시보드 스크린샷*
+<img width="1195" height="1373" alt="image" src="https://github.com/user-attachments/assets/f0ed07b4-e4df-45da-a123-001257488527" />
+
 
 ---
 ## 주요 기능
