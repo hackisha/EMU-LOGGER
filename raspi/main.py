@@ -85,7 +85,7 @@ def toggle_logging_state(gpio: GpioController):
 def write_csv_log_entry(gpio: GpioController):
     if not logging_active or not csv_writer:
         return
-    full_row = { "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] }
+    full_row = { "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")}
     full_row.update(latest_gps_data)
     full_row.update(latest_can_data)
     full_row.update(latest_acc_data)
