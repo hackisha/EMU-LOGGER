@@ -1,14 +1,8 @@
-# gps_worker.py
-
 import serial
 import pynmea2
 from typing import Callable, Dict, Any, Optional
 
 class GpsWorker:
-    """
-    시리얼 포트에서 NMEA 문장을 읽고, 여러 문장을 조합하여
-    하나의 완전한 GPS 데이터 패킷을 콜백으로 전달합니다.
-    """
     def __init__(
         self,
         port: str,
@@ -66,8 +60,18 @@ class GpsWorker:
             # 위도와 속도가 모두 수집되었는지 확인
             if self.temp_gps_data.get('lat') is not None and self.temp_gps_data.get('GPS_Speed_KPH') is not None:
                 if self.on_update:
-                    # 모든 데이터를 복사하여 콜백으로 전달
-                    self.on_update(self.temp_gps_data.copy())
+                    # main.py의 CSV 헤더와 키 이름을 맞추기 위한 데이터 매핑
+                    mapped_data = {
+                        "Latitude": self.temp_gps_data.get('lat'),
+                        "Longitude": self.temp_gps_data.get('lon'),
+                        "GPS_Speed_KPH": self.temp_gps_data.get('GPS_Speed_KPH'),
+                        "Satellites": self.temp_gps_data.get('satellites'),
+                        "Altitude_m": self.temp_gps_data.get('altitude'),
+                        "Heading_deg": self.temp_gps_data.get('heading'),
+                        "gps_fix": self.temp_gps_data.get('gps_fix'),
+                        "gps_fix_type": self.temp_gps_data.get('gps_fix_type')
+                    }
+                    self.on_update(mapped_data)
                 
                 # 다음 패킷을 위해 임시 데이터 초기화
                 self.temp_gps_data = {}
