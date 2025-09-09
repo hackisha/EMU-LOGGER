@@ -1,4 +1,4 @@
-# main.py (데이터 송신 전용, ADXL345 사용, 모든 기능 포함)
+# main.py (데이터 송신 전용, ADXL345 사용, 모든 기능 포함, 자동 로깅 시작)
 
 import os
 import sys
@@ -154,7 +154,7 @@ def main():
     def send_lap_to_adu(lap: int):
         global last_sent_lap
         try:
-            payload = struct.pack('<B', lap) 
+            payload = struct.pack('<B', lap)
             full_payload = payload.ljust(8, b'\x00')
             can_worker.send_message(0x700, full_payload)
             last_sent_lap = lap
@@ -174,7 +174,7 @@ def main():
                     send_lap_to_adu(lap_count)
             except Exception as e:
                 print(f"\n[MQTT] 랩 카운트 메시지 처리 오류: {e}")
-    
+
     # MQTT 클라이언트 콜백 및 구독 설정
     mqtt_client.client.on_message = on_mqtt_message
     mqtt_client.connect()
@@ -209,8 +209,12 @@ def main():
     accel_thread.start()
     print("데이터 수집 스레드 시작 (CAN, GPS, ACCEL)")
 
+    # --- 스크립트 실행 시 로깅 자동 시작 ---
+    print("\n[INFO] 데이터 로깅을 자동으로 시작합니다.")
+    toggle_logging_state(gpio)
+
     if not exit_event.is_set():
-        print("\n[INFO] 데이터 수집을 시작합니다. 버튼을 눌러 로깅을 제어하세요. (종료: Ctrl+C)")
+        print("\n[INFO] 데이터 수집이 시작되었습니다. 버튼을 눌러 로깅을 중지/재시작할 수 있습니다. (종료: Ctrl+C)")
 
     # --- 메인 루프 ---
     last_csv_write_time = 0.0
