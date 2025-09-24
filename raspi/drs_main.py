@@ -25,11 +25,10 @@ from .accel_worker import AccelWorker
 exit_event = threading.Event()
 logging_active = False
 last_sent_lap = 0
-drs_is_active = False
-wing_state = "neutral"
+wing_state = "down" # 초기 상태는 '눕혀짐'
 last_vss = 0.0
-accel_start_time = 0
-decel_start_time = 0
+is_wing_moving = False # 윙이 현재 움직이는 중인지 확인하는 플래그
+zero_speed_start_time = 0 # 속도가 0이 된 시점을 기록
 
 # 데이터 저장소
 latest_can_data = {}
@@ -40,7 +39,7 @@ latest_acc_data = {}
 csv_file = None
 csv_writer = None
 
-# ======== 콜백 함수들 (main 함수 밖) ========
+# ======== main 함수 밖에 위치하는 함수들 ========
 def on_gps_update(parsed: dict):
     global latest_gps_data
     latest_gps_data.update(parsed)
@@ -86,7 +85,7 @@ def worker_loop(worker, stop_event: threading.Event):
 def main():
     """메인 실행 함수"""
     global logging_active, csv_file, csv_writer, last_sent_lap, latest_can_data
-    global drs_is_active, gpio, wing_state, last_vss, accel_start_time, decel_start_time
+    global gpio, wing_state, last_vss, is_wing_moving, zero_speed_start_time
 
     if os.geteuid() != 0:
         print("오류: 이 스크립트는 sudo 권한으로 실행해야 합니다.")
@@ -98,64 +97,76 @@ def main():
     # --- 초기화 ---
     gpio = GpioController()
     mqtt_client = MqttClient(broker_address=MQTT_BROKER, port=MQTT_PORT)
-    
+
     # --- 제어 로직 및 콜백 함수 ---
-    def _move_wing_task(direction: bool, duration: float):
-        """백그라운드 스레드에서 실행될 윙 이동 작업"""
-        gpio.set_motor_direction(direction)
-        gpio.set_motor_speed(100)
-        time.sleep(duration)
-        gpio.set_motor_speed(0)
-
-    def control_drs_wing(speed_kmh: float):
-        """차량의 가속/감속 상태 지속 시간에 따라 리어윙을 제어합니다."""
-        global last_vss, wing_state, accel_start_time, decel_start_time, drs_is_active
-        
-        speed_delta = speed_kmh - last_vss
-        now = time.time()
-
-        ACCEL_THRESHOLD = 2.0
-        DECEL_THRESHOLD = -2.0
-        ACCEL_DURATION_REQ = 0.5
-        DECEL_DURATION_REQ = 0.3
-
-        if speed_delta > ACCEL_THRESHOLD:
-            if accel_start_time == 0:
-                accel_start_time = now
-            decel_start_time = 0
-        elif speed_delta < DECEL_THRESHOLD:
-            if decel_start_time == 0:
-                decel_start_time = now
-            accel_start_time = 0
-        else:
-            accel_start_time = 0
-            decel_start_time = 0
-        
+    def _move_wing_task(direction: int, duration: float):
+        global is_wing_moving
+        is_wing_moving = True
         try:
-            if accel_start_time > 0 and (now - accel_start_time > ACCEL_DURATION_REQ) and not drs_is_active:
-                print("\n[DRS] Activating (Wing Down)...")
-                wing_thread = threading.Thread(target=_move_wing_task, args=(False, 0.5)) # 역방향
-                wing_thread.start()
-                wing_state = "down"
-                drs_is_active = True
-                accel_start_time = 0
-            elif decel_start_time > 0 and (now - decel_start_time > DECEL_DURATION_REQ) and drs_is_active:
-                print("\n[DRS] Deactivating (Wing Up)...")
-                wing_thread = threading.Thread(target=_move_wing_task, args=(True, 0.5)) # 정방향
+            gpio.set_motor_direction(direction)
+            time.sleep(duration)
+        finally:
+            gpio.set_motor_direction(0)
+            is_wing_moving = False
+
+    def _zeroing_sequence_task():
+        global wing_state, is_wing_moving
+        if is_wing_moving: return
+
+        is_wing_moving = True
+        try:
+            print("\n[INFO] Auto Rear wing zeroing sequence starting...")
+            _move_wing_task(-1, 1.0)
+            wing_state = "down"
+            print("[INFO] Rear wing zeroing sequence finished. Initial state: Wing Down")
+        except Exception as e:
+            print(f"\n[ERROR] Rear wing zeroing failed: {e}")
+        finally:
+            is_wing_moving = False
+
+    def control_airbrake(speed_kmh: float):
+        global last_vss, wing_state, zero_speed_start_time
+
+        if is_wing_moving:
+            return
+
+        # 속도가 0일 때 자동 영점 정렬 로직
+        if speed_kmh < 1.0: # 약간의 오차를 고려해 1km/h 미만으로 체크
+            if zero_speed_start_time == 0:
+                zero_speed_start_time = time.time() # 타이머 시작
+            elif time.time() - zero_speed_start_time > 1.0:
+                zeroing_thread = threading.Thread(target=_zeroing_sequence_task)
+                zeroing_thread.start()
+                zero_speed_start_time = 0 # 한 번 실행 후 타이머 리셋
+                return # 영점 정렬이 시작되면 다른 DRS 로직은 건너뜀
+        else:
+            zero_speed_start_time = 0 # 속도가 0이 아니면 타이머 리셋
+
+        speed_delta = speed_kmh - last_vss
+        DECEL_THRESHOLD = -1.0
+        ACCEL_THRESHOLD = 0.5
+
+        try:
+            if speed_delta < DECEL_THRESHOLD and wing_state != "up":
+                print("\n[AIRBRAKE] Decelerating -> Wing Up (정방향)")
+                wing_thread = threading.Thread(target=_move_wing_task, args=(1, 0.5))
                 wing_thread.start()
                 wing_state = "up"
-                drs_is_active = False
-                decel_start_time = 0
+            elif speed_delta > ACCEL_THRESHOLD and wing_state != "down":
+                print("\n[AIRBRAKE] Cruising/Accel -> Wing Down (역방향)")
+                wing_thread = threading.Thread(target=_move_wing_task, args=(-1, 0.5))
+                wing_thread.start()
+                wing_state = "down"
         except Exception as e:
-            print(f"\n[ERROR] DRS Wing control failed: {e}")
-        
+            print(f"\n[ERROR] Airbrake control failed: {e}")
+
         last_vss = speed_kmh
 
     def on_can_message(arbitration_id: int, parsed: dict):
         global latest_can_data
         latest_can_data.update(parsed)
         if "VSS_kmh" in parsed:
-            control_drs_wing(parsed["VSS_kmh"])
+            control_airbrake(parsed["VSS_kmh"])
 
     def toggle_logging_state():
         global logging_active, csv_file, csv_writer
@@ -180,8 +191,7 @@ def main():
             csv_writer = None
 
     def write_csv_log_entry():
-        if not logging_active or not csv_writer:
-            return
+        if not logging_active or not csv_writer: return
         full_row = { "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] }
         full_row.update(latest_gps_data)
         full_row.update(latest_can_data)
@@ -190,25 +200,25 @@ def main():
         gpio.blink_logging_led_once()
 
     def print_status_line():
-        global last_sent_lap
+        global last_sent_lap, wing_state
         gps_status = "OK" if latest_gps_data.get("gps_fix") else "No Fix"
         rpm = latest_can_data.get('RPM', 0)
         vss = latest_can_data.get('VSS_kmh', 0.0)
         logging_status = "ON" if logging_active else "OFF"
-        adu_ax = latest_can_data.get('ADU_ax_g', 0.0)
-        adu_ay = latest_can_data.get('ADU_ay_g', 0.0)
+
         status_text = (
-            f"RPM:{rpm:>5} | VSS:{vss:>5.1f}km/h | GPS:{gps_status} | Logging:{logging_status} | Lap Sent:{last_sent_lap} | "
-            f"ADU G-Force(X/Y): {adu_ax:+.2f}/{adu_ay:+.2f}"
+            f"RPM:{rpm:>5} | VSS:{vss:>5.1f}km/h | GPS:{gps_status} | Logging:{logging_status} | "
+            f"Lap Sent:{last_sent_lap} | Wing: {wing_state.upper():<4}"
         )
         sys.stdout.write("\r" + status_text + "    ")
         sys.stdout.flush()
 
-    # --- 워커 객체 생성 (수정된 콜백 함수 전달) ---
+    # --- 워커 객체 생성 ---
     can_worker = CanWorker(on_message=on_can_message)
     gps_worker = GpsWorker(port=SERIAL_PORT, baudrate=BAUD_RATE, on_update=on_gps_update)
     accel_worker = AccelWorker(on_update=on_accel_update)
-    
+
+    # --- MQTT 관련 로직 ---
     def send_lap_to_adu(lap: int):
         global last_sent_lap
         try:
@@ -228,12 +238,11 @@ def main():
                 data = json.loads(payload)
                 lap_count = data.get("lap_count")
                 if lap_count is not None:
-                    print(f"\n[MQTT] 랩 카운트 수신: {lap_count}. ADU로 CAN 메시지를 전송합니다.")
+                    print(f"\n[MQTT] 랩 카운트 수신: {lap_count}")
                     send_lap_to_adu(lap_count)
             except Exception as e:
-                print(f"\n[MQTT] 랩 카운트 메시지 처리 오류: {e}")
-    
-    # MQTT 클라이언트 콜백 및 구독 설정
+                print(f"\n[MQTT] 메시지 처리 오류: {e}")
+
     mqtt_client.client.on_message = on_mqtt_message
     mqtt_client.connect()
     command_topic = MQTT_TOPICS.get("COMMAND_LAP", "vehicle/command/lap")
@@ -250,21 +259,11 @@ def main():
         gpio.set_error_led(True)
         exit_event.set()
         return
-        
-    # --- 리어윙 영점 정렬 ---
-    try:
-        print("\n[INFO] Rear wing zeroing sequence starting...")
-        # 윙을 세우는 방향(정방향)으로 1초간 작동시켜 강제로 끝까지 보냄
-        gpio.set_motor_direction(True)
-        gpio.set_motor_speed(100)
-        time.sleep(1.0)
-        gpio.set_motor_speed(0)
-        wing_state = "up" # 초기 상태는 '세워짐'
-        drs_is_active = False
-        print("[INFO] Rear wing zeroing sequence finished.")
-    except Exception as e:
-        print(f"\n[ERROR] Rear wing zeroing failed: {e}")
-        
+
+    # --- 초기 리어윙 영점 정렬 ---
+    initial_zeroing_thread = threading.Thread(target=_zeroing_sequence_task)
+    initial_zeroing_thread.start()
+
     # --- 스레드 생성 ---
     wifi_monitor_thread = threading.Thread(target=start_wifi_monitor, args=(gpio, exit_event), daemon=True)
     mqtt_thread = threading.Thread(target=mqtt_uploader, args=(mqtt_client, exit_event), daemon=True)
@@ -280,10 +279,10 @@ def main():
     gps_thread.start()
     accel_thread.start()
     print("데이터 수집 스레드 시작 (CAN, GPS, ACCEL)")
-    
+
     # --- 자동 로깅 시작 ---
     toggle_logging_state()
-    
+
     # --- 메인 루프 ---
     last_csv_write_time = 0.0
     last_button_press_time = 0.0
@@ -295,12 +294,12 @@ def main():
             if gpio.read_button_pressed() and (now - last_button_press_time > 0.3):
                 last_button_press_time = now
                 toggle_logging_state()
-            
+
             if logging_active and (now - last_csv_write_time >= 0.04):
                 write_csv_log_entry()
-            
+
             print_status_line()
-            
+
             next_loop_time += loop_interval
             sleep_duration = next_loop_time - time.time()
             if sleep_duration > 0:
@@ -328,7 +327,8 @@ def main():
         gpio.cleanup()
         print("[INFO] 프로그램이 완전히 종료되었습니다.")
 
-# --- main 함수 밖에 위치해야 하는 함수들 ---
+# --- main 함수 밖에 위치하는 함수들 ---
+# (이 함수들은 전역 변수에만 의존하므로 밖에 있어도 안전합니다)
 def on_gps_update(parsed: dict):
     global latest_gps_data
     latest_gps_data.update(parsed)
@@ -336,24 +336,6 @@ def on_gps_update(parsed: dict):
 def on_accel_update(parsed: dict):
     global latest_acc_data
     latest_acc_data.update(parsed)
-
-def mqtt_uploader(mqtt: MqttClient, stop_event: threading.Event):
-    while not stop_event.is_set():
-        adu_accel_data = {
-            "ax_g": latest_can_data.get("ADU_ax_g"),
-            "ay_g": latest_can_data.get("ADU_ay_g"),
-            "az_g": latest_can_data.get("ADU_az_g")
-        }
-        data_to_publish = {
-            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-            'can': latest_can_data,
-            'gps': latest_gps_data,
-            'accel': latest_acc_data,
-            'adu_accel': adu_accel_data
-        }
-        if latest_can_data or latest_gps_data or latest_acc_data:
-            mqtt.publish(MQTT_TOPICS["TELEMETRY"], json.dumps(data_to_publish))
-        stop_event.wait(MQTT_UPLOAD_INTERVAL_SEC)
 
 def handle_exit(signum, frame):
     print("\n[INFO] 종료 신호 수신. 리소스를 정리합니다...")
@@ -370,7 +352,6 @@ def worker_loop(worker, stop_event: threading.Event):
             if isinstance(e, (IOError, OSError)):
                 break
         time.sleep(0.001)
-
 
 if __name__ == "__main__":
     main()
