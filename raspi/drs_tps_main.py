@@ -138,7 +138,7 @@ def main():
         if speed_kmh < 1.0:
             if zero_speed_start_time == 0:
                 zero_speed_start_time = time.time()
-            elif time.time() - zero_speed_start_time > 1.0:
+            elif time.time() - zero_speed_start_time > 30.0:
                 zeroing_thread = threading.Thread(target=_zeroing_sequence_task)
                 zeroing_thread.start()
                 zero_speed_start_time = 0
@@ -147,7 +147,7 @@ def main():
             zero_speed_start_time = 0
 
         # ==================== TPS 연동 로직 시작 ====================
-        IDLE_TPS_THRESHOLD = 17.5  # 아이들 TPS 값 (17%)에 약간의 여유를 줌
+        IDLE_TPS_THRESHOLD = 20  # 아이들 TPS 값 (17%)에 약간의 여유를 줌
         tps = latest_can_data.get("TPS_percent", IDLE_TPS_THRESHOLD) # CAN 데이터에서 TPS 값 가져오기
         # ==========================================================
 
