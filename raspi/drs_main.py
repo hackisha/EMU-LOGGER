@@ -134,7 +134,7 @@ def main():
         if speed_kmh < 1.0: # 약간의 오차를 고려해 1km/h 미만으로 체크
             if zero_speed_start_time == 0:
                 zero_speed_start_time = time.time() # 타이머 시작
-            elif time.time() - zero_speed_start_time > 1.0:
+            elif time.time() - zero_speed_start_time > 30:
                 zeroing_thread = threading.Thread(target=_zeroing_sequence_task)
                 zeroing_thread.start()
                 zero_speed_start_time = 0 # 한 번 실행 후 타이머 리셋
