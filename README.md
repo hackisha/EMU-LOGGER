@@ -22,7 +22,7 @@ flowchart LR
     ACC[ADXL345] -->|I2C| COL
     SC --> COL
     BTN[GPIO 버튼] --> COL
-    COL -->|약 20 Hz| CSV[/home/pi/logs/*.csv]
+    COL -->|약 20 Hz| CSV["/home/pi/logs/*.csv"]
     COL -->|JSON, 약 5 Hz| MQTT[MQTT broker<br/>car/emu/telemetry]
     MQTT --> WEB[Flask + Flask-SocketIO]
     WEB -->|telemetry_update| UI[브라우저 대시보드]
